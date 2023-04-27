@@ -3,6 +3,8 @@
 #include <vector>
 #include <tuple>
 #include <iostream>
+#include <algorithm>
+
 using namespace std;
 
 class Medicine {
@@ -62,7 +64,9 @@ read_input_files(const string &medicine_file, const string &strategy_file, const
 
     return make_tuple(medicines, strategies, discards);
 }
-double simulate_sales(const vector<Medicine>& medicines, const vector<vector<pair<int, int>>>& strategies, const vector<pair<int, int>>& discards) {
+
+double simulate_sales(const vector<Medicine> &medicines, const vector<vector<pair<int, int>>> &strategies,
+                      const vector<pair<int, int>> &discards) {
     double profit = 0;
     vector<int> remaining_days(medicines.size());
     for (size_t i = 0; i < medicines.size(); ++i) {
@@ -71,17 +75,50 @@ double simulate_sales(const vector<Medicine>& medicines, const vector<vector<pai
 
     for (size_t day = 0; day < strategies.size(); ++day) {
         // 处理丢弃药品
-        for (const auto& discard : discards) {
+        for (const auto &discard: discards) {
             if (discard.first == static_cast<int>(day)) {
+                profit -= medicines[discard.second].cost; // 减去丢弃药品的成本
                 remaining_days[discard.second] = 0;
             }
         }
 
         // 处理每天的销售策略
-        for (const auto& display_medicine : strategies[day]) {
+        vector<pair<double, int>> display_medicines;
+        for (const auto &display_medicine: strategies[day]) {
             if (display_medicine.first >= 0 && remaining_days[display_medicine.first] > 0) {
-                profit += display_medicine.second - medicines[display_medicine.first].cost;
-                remaining_days[display_medicine.first]--;
+                display_medicines.emplace_back(display_medicine.second, display_medicine.first);
+            }
+        }
+
+        // 按照价格和保质期排序
+        sort(display_medicines.begin(), display_medicines.end(),
+             [&](const pair<double, int> &a, const pair<double, int> &b) {
+                 if (a.first == b.first) {
+                     return remaining_days[a.second] > remaining_days[b.second];
+                 }
+                 return a.first < b.first;
+             });
+
+        // 顾客购买药品
+        int customers = 3;
+        for (const auto &display_medicine: display_medicines) {
+            if (customers == 0) {
+                break;
+            }
+            profit += display_medicine.first - medicines[display_medicine.second].cost;
+            remaining_days[display_medicine.second]--;
+            customers--;
+        }
+
+        // 扣除仓库管理费
+        for (int &remaining_day: remaining_days) {
+            if (remaining_day > 0) {
+                if (remaining_day < 5) {
+                    profit -= 1;
+                } else {
+                    profit -= 0.5;
+                }
+                remaining_day--;
             }
         }
     }
@@ -89,7 +126,7 @@ double simulate_sales(const vector<Medicine>& medicines, const vector<vector<pai
     return profit;
 }
 
-int main(int argc, char* argv[]) {
+int main(int argc, char *argv[]) {
     if (argc != 5) {
         cerr << "Usage: " << argv[0] << " <medicine_file> <strategy_file> <delete_file> <output_file>" << endl;
         return 1;
