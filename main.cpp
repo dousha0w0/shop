@@ -1,153 +1,145 @@
-#include <fstream>
-#include <sstream>
+#include <iostream>
+#include <string>
 #include <vector>
 #include <tuple>
-#include <iostream>
 #include <algorithm>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
+#include <array>
 
 using namespace std;
 
-class Medicine {
-public:
-    double cost;
-    int expiration;
-
-    Medicine(double cost, int expiration) : cost(cost), expiration(expiration) {}
+struct Medicine {
+    int id;
+    double price;
+    int expiry_days;
 };
 
-tuple<vector<Medicine>, vector<vector<pair<int, int>>>, vector<pair<int, int>>>
+tuple<vector<Medicine>, vector<array<pair<int, int>, 3>>, vector<pair<int, int>>>
 read_input_files(const string &medicine_file, const string &strategy_file, const string &discard_file) {
+    // 读取medicine.txt
+    ifstream m_file(medicine_file);
     vector<Medicine> medicines;
-    vector<vector<pair<int, int>>> strategies;
-    vector<pair<int, int>> discards;
+    double price;
+    int expiry_days;
+    int id = 0;
+    while (m_file >> price >> expiry_days) {
+        medicines.push_back({id++, price, expiry_days});
+    }
+    m_file.close();
 
-    ifstream in;
+    // 读取strategy.txt
+    ifstream s_file(strategy_file);
+    vector<array<pair<int, int>, 3>> strategies(10);
+    int day = 0;
     string line;
-
-    // 读取药品文件
-    in.open(medicine_file);
-    while (getline(in, line)) {
+    while (getline(s_file, line)) {
         stringstream ss(line);
-        double cost;
-        int expiration;
-        ss >> cost >> expiration;
-        medicines.emplace_back(cost, expiration);
-    }
-    in.close();
-
-    // 读取策略文件
-    in.open(strategy_file);
-    while (getline(in, line)) {
-        stringstream ss(line);
-        vector<pair<int, int>> strategy;
-        string item;
-        while (getline(ss, item, ' ')) {
-            stringstream item_ss(item);
-            int medicine_index, price_index;
-            char delimiter;
-            item_ss >> medicine_index >> delimiter >> price_index;
-            strategy.emplace_back(medicine_index, price_index);
+        int id1, index;
+        for (int i = 0; i < 3; ++i) {
+            ss >> id1 >> index;
+            strategies[day][i] = {id1, index};
         }
-        strategies.push_back(strategy);
+        ++day;
     }
-    in.close();
+    s_file.close();
 
-    // 读取丢弃药品文件
-    in.open(discard_file);
-    while (getline(in, line)) {
-        stringstream ss(line);
-        int day, medicine_index;
-        ss >> day >> medicine_index;
-        discards.emplace_back(day, medicine_index);
+    // 读取delete.txt
+    ifstream d_file(discard_file);
+    vector<pair<int, int>> discards;
+    int discard_day, discard_id;
+    while (d_file >> discard_day >> discard_id) {
+        discards.emplace_back(discard_day, discard_id);
     }
-    in.close();
+    d_file.close();
 
-    return make_tuple(medicines, strategies, discards);
+    return {medicines, strategies, discards};
 }
 
-double simulate_sales(const vector<Medicine> &medicines, const vector<vector<pair<int, int>>> &strategies,
+double simulate_sales(const vector<Medicine> &medicines, const vector<array<pair<int, int>, 3>> &strategies,
                       const vector<pair<int, int>> &discards) {
-    double profit = 0;
-    vector<int> remaining_days(medicines.size());
-    for (size_t i = 0; i < medicines.size(); ++i) {
-        remaining_days[i] = medicines[i].expiration;
-    }
+    const vector<double> price_offsets = {-1.5, -1, -0.5, 0, 2, 4, 6};
+    double total_profit = 0.0;
+    vector<Medicine> remaining_medicines = medicines;
 
-    for (size_t day = 0; day < strategies.size(); ++day) {
-        // 处理丢弃药品
-        for (const auto &discard: discards) {
-            if (discard.first == static_cast<int>(day)) {
-                profit -= medicines[discard.second].cost; // 减去丢弃药品的成本
-                remaining_days[discard.second] = 0;
+    for (int day = 0; day < 10; ++day) {
+        // 应用策略
+        vector<Medicine> displayed_medicines;
+        for (const auto &[id, index]: strategies[day]) {
+            if (id != -1) {
+                Medicine m = remaining_medicines[id];
+                m.price += price_offsets[index];
+                displayed_medicines.push_back(m);
             }
         }
 
-        // 处理每天的销售策略
-        vector<pair<double, int>> display_medicines;
-        for (const auto &display_medicine: strategies[day]) {
-            if (display_medicine.first >= 0 && remaining_days[display_medicine.first] > 0) {
-                display_medicines.emplace_back(display_medicine.second, display_medicine.first);
+        // 顾客购买
+        sort(displayed_medicines.begin(), displayed_medicines.end(), [](const Medicine &a, const Medicine &b) {
+            if (a.price == b.price) {
+                return a.expiry_days > b.expiry_days;
             }
-        }
+            return a.price < b.price;
+        });
 
-        // 按照价格和保质期排序
-        sort(display_medicines.begin(), display_medicines.end(),
-             [&](const pair<double, int> &a, const pair<double, int> &b) {
-                 if (a.first == b.first) {
-                     return remaining_days[a.second] > remaining_days[b.second];
-                 }
-                 return a.first < b.first;
-             });
-
-        // 顾客购买药品
         int customers = 3;
-        for (const auto &display_medicine: display_medicines) {
-            if (customers == 0) {
-                break;
+        for (const Medicine &m: displayed_medicines) {
+            if (customers > 0) {
+                total_profit += m.price - m.price;
+                remaining_medicines[m.id].expiry_days = -1;
+                --customers;
             }
-            profit += display_medicine.first - medicines[display_medicine.second].cost;
-            remaining_days[display_medicine.second]--;
-            customers--;
         }
 
-        // 扣除仓库管理费
-        for (int &remaining_day: remaining_days) {
-            if (remaining_day > 0) {
-                if (remaining_day < 5) {
-                    profit -= 1;
+        // 管理费用
+        for (Medicine &m: remaining_medicines) {
+            if (m.expiry_days > 0) {
+
+                if (m.expiry_days < 5) {
+                    total_profit -= 1;
                 } else {
-                    profit -= 0.5;
+                    {
+                        total_profit -= 0.5;
+                    }
+                    m.expiry_days -= 1;
                 }
-                remaining_day--;
+            }
+
+            // 丢弃过期药品
+            for (const auto &[discard_day, discard_id]: discards) {
+                if (discard_day == day) {
+                    Medicine &m = remaining_medicines[discard_id];
+                    if (m.expiry_days == 0) {
+                        total_profit -= m.price;
+                        m.expiry_days = -1;
+                    }
+                }
             }
         }
-    }
 
-    return profit;
+        return total_profit;
+    }
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 5) {
-        cerr << "Usage: " << argv[0] << " <medicine_file> <strategy_file> <delete_file> <output_file>" << endl;
-        return 1;
+    string medicine_file, strategy_file, discard_file;
+    for (int i = 1; i < argc; ++i) {
+        string arg = argv[i];
+        if (arg == "-m") {
+            medicine_file = argv[++i];
+        } else if (arg == "-s") {
+            strategy_file = argv[++i];
+        } else if (arg == "-d") {
+            discard_file = argv[++i];
+        }
     }
+    auto input_data = read_input_files(medicine_file, strategy_file, discard_file);
+    vector<Medicine> medicines = get<0>(input_data);
+    vector<array<pair<int, int>, 3>> strategies = get<1>(input_data);
+    vector<pair<int, int>> discards = get<2>(input_data);
 
-    string medicine_file = argv[1];
-    string strategy_file = argv[2];
-    string discard_file = argv[3];
-    string output_file = argv[4];
-
-    vector<Medicine> medicines;
-    vector<vector<pair<int, int>>> strategies;
-    vector<pair<int, int>> discards;
-
-    tie(medicines, strategies, discards) = read_input_files(medicine_file, strategy_file, discard_file);
     double profit = simulate_sales(medicines, strategies, discards);
+    cout << "Total profit: " << fixed << setprecision(2) << profit << endl;
 
-    ofstream out(output_file);
-    out << "Profit: " << profit << endl;
-    out.close();
-
-    cout << "Profit: " << profit << endl;
     return 0;
 }
